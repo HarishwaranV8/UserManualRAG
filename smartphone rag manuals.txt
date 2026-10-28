@@ -1,0 +1,30 @@
+smartphone-rag/
+├── manuals/
+│   ├── Samsung_Galaxy_S25.pdf
+│   ├── iPhone_16.pdf
+│   └── Pixel_10.pdf
+├── backend/
+│   ├── manage.py
+│   ├── requirements.txt
+│   ├── .env
+│   ├── config/
+│   │   ├── settings.py
+│   │   ├── urls.py
+│   │   └── wsgi.py
+│   └── chat/
+│       ├── urls.py
+│       ├── views.py
+│       ├── rag.py
+│       └── prompts.py
+├── frontend/
+│   ├── package.json
+│   ├── angular.json
+│   └── src/
+│       ├── main.ts
+│       ├── styles.css
+│       └── app/
+│           ├── app.component.ts
+│           ├── app.component.html
+│           └── app.component.css
+├── .gitignore
+└── README.md

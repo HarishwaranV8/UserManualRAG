@@ -1,0 +1,66 @@
+<div class="app">
+    <header class="header">
+      <div class="logo">S</div>
+      <div>
+        <h1>Smartphone Manual Compare</h1>
+        <p>Ask questions. Compare three phones.</p>
+      </div>
+    </header>
+  
+    <main class="messages" aria-live="polite">
+      <article
+        *ngFor="let message of messages; trackBy: trackByIndex"
+        class="message"
+        [class.user]="message.role === 'user'"
+      >
+        <strong>
+          {{ message.role === 'user' ? 'You' : 'Manual Assistant' }}
+        </strong>
+  
+        <p *ngIf="!message.html">{{ message.text }}</p>
+  
+        <div
+          *ngIf="message.html"
+          class="answer"
+          [innerHTML]="message.html"
+        ></div>
+  
+        <div class="sources" *ngIf="message.sources?.length">
+          <strong>Retrieved sources</strong>
+          <span *ngFor="let source of message.sources">
+            {{ source.phone }} —
+            {{ source.page != null ? 'page ' + source.page : 'page unavailable' }}
+          </span>
+        </div>
+      </article>
+  
+      <p *ngIf="loading" class="loading">
+        Searching all three manuals and comparing...
+      </p>
+  
+      <p *ngIf="error" class="error">{{ error }}</p>
+    </main>
+  
+    <footer class="composer">
+        <form class="composer" (ngSubmit)="send()">
+            <textarea
+              name="question"
+              [(ngModel)]="question"
+              (keydown)="onKeydown($event)"
+              placeholder="Ask about charging, camera, hotspot, settings..."
+              [disabled]="loading"
+              rows="2"
+              required
+            ></textarea>
+          
+            <button type="submit" [disabled]="loading || !question.trim()">
+              {{ loading ? 'Thinking...' : 'Send ↑' }}
+            </button>
+          
+            <small>
+              Answers are grounded in manual excerpts. Verify important details
+              against the original pages.
+            </small>
+          </form>
+    </footer>
+  </div>

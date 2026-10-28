@@ -1,0 +1,349 @@
+import os
+import re
+import io
+import threading
+from pathlib import Path
+import joblib
+import fitz  # PyMuPDF
+import pytesseract
+from PIL import Image
+from pypdf import PdfReader
+from django.conf import settings
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+
+
+_lock = threading.RLock()
+_index = None
+INDEX_FILE = Path(__file__).resolve().parent / "rag_index.joblib"
+
+def manuals_directory():
+    """
+    Resolve MANUALS_DIR from the environment.
+    Relative paths are resolved from backend/ (settings.BASE_DIR).
+    Default: smartphone-rag/manuals/
+    """
+    configured = os.getenv("MANUALS_DIR", "../manuals")
+    path = Path(configured)
+
+    if not path.is_absolute():
+        path = Path(settings.BASE_DIR) / path
+
+    return path.resolve()
+
+
+def split_text(text, chunk_size=1100, overlap=180):
+    """Split extracted/OCR text into overlapping chunks."""
+    text = re.sub(r"\s+", " ", text or "").strip()
+
+    if not text:
+        return []
+
+    chunks = []
+    start = 0
+
+    while start < len(text):
+        end = min(start + chunk_size, len(text))
+        chunk = text[start:end].strip()
+
+        if chunk:
+            chunks.append(chunk)
+
+        if end == len(text):
+            break
+
+        start = end - overlap
+
+    return chunks
+
+
+def _ocr_image(image_bytes):
+    """OCR an embedded image, returning an empty string on failure."""
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as image:
+            image.load()
+
+            # Skip tiny images such as decorative icons.
+            if image.width < 100 or image.height < 60:
+                return ""
+
+            # Tesseract generally works better with RGB/RGBA converted to RGB.
+            image = image.convert("RGB")
+
+            # Upscale small diagrams for improved OCR.
+            if image.width < 1000:
+                scale = min(2, 1000 / image.width)
+                image = image.resize(
+                    (int(image.width * scale), int(image.height * scale))
+                )
+
+            return pytesseract.image_to_string(
+                image,
+                config="--psm 11"
+            ).strip()
+
+    except Exception as exc:
+        print(f"Image OCR failed: {exc}")
+        return ""
+
+
+def _ocr_page(pdf_page):
+    """Render a scanned PDF page and OCR the rendered page."""
+    try:
+        pix = pdf_page.get_pixmap(
+            matrix=fitz.Matrix(2, 2),
+            colorspace=fitz.csRGB,
+            alpha=False,
+        )
+
+        image = Image.frombytes(
+            "RGB",
+            (pix.width, pix.height),
+            pix.samples,
+        )
+
+        return pytesseract.image_to_string(
+            image,
+            config="--psm 3"
+        ).strip()
+
+    except Exception as exc:
+        print(f"Page OCR failed: {exc}")
+        return ""
+
+
+def _extract_page_text(pdf_page, pymupdf_page):
+    """
+    Extract native PDF text first.
+    OCR the entire page if it looks scanned.
+    Otherwise OCR embedded images to capture diagram labels.
+    """
+    native_text = (pdf_page.extract_text() or "").strip()
+    extracted_parts = []
+
+    if native_text:
+        extracted_parts.append(native_text)
+
+    # Scanned pages often have little or no extractable native text.
+    if len(native_text) < 80:
+        page_ocr = _ocr_page(pymupdf_page)
+
+        if page_ocr:
+            extracted_parts.append(
+                "[OCR text from scanned page]\n" + page_ocr
+            )
+
+    else:
+        # A page can contain native text AND diagrams with embedded labels.
+        seen_xrefs = set()
+
+        for image_info in pymupdf_page.get_images(full=True):
+            xref = image_info[0]
+
+            if xref in seen_xrefs:
+                continue
+
+            seen_xrefs.add(xref)
+
+            try:
+                extracted_image = pymupdf_page.parent.extract_image(xref)
+                image_bytes = extracted_image["image"]
+                image_text = _ocr_image(image_bytes)
+
+                if image_text:
+                    extracted_parts.append(
+                        "[OCR text from embedded diagram/image]\n"
+                        + image_text
+                    )
+
+            except Exception as exc:
+                print(
+                    f"Could not extract image {xref} "
+                    f"on page {pymupdf_page.number + 1}: {exc}"
+                )
+
+    return "\n\n".join(extracted_parts).strip()
+
+
+
+def build_index():
+    """
+    Build the TF-IDF index from every PDF in manuals/.
+    Save the completed index to disk for reuse.
+    """
+    global _index
+
+    with _lock:
+        directory = manuals_directory()
+
+        if not directory.exists():
+            raise FileNotFoundError(
+                f"Manuals directory not found: {directory}"
+            )
+
+        pdf_files = sorted(directory.glob("*.pdf"))
+
+        if not pdf_files:
+            raise FileNotFoundError(
+                f"No PDF manuals found in: {directory}"
+            )
+
+        chunks = []
+        phones = []
+
+        for pdf_path in pdf_files:
+            phone = pdf_path.stem.replace("_", " ").strip()
+            phones.append(phone)
+
+            print(f"Indexing {pdf_path.name}...")
+
+            reader = PdfReader(str(pdf_path))
+
+            with fitz.open(str(pdf_path)) as visual_doc:
+                page_count = min(
+                    len(reader.pages),
+                    len(visual_doc),
+                )
+
+                for page_index in range(page_count):
+                    text = _extract_page_text(
+                        reader.pages[page_index],
+                        visual_doc[page_index],
+                    )
+
+                    if not text:
+                        continue
+
+                    for part in split_text(text):
+                        chunks.append({
+                            "phone": phone,
+                            "page": page_index + 1,
+                            "source": pdf_path.name,
+                            "text": part,
+                        })
+
+        if not chunks:
+            raise ValueError(
+                "No text was extracted from the manuals. "
+                "Check the PDFs and Tesseract installation."
+            )
+
+        vectorizer = TfidfVectorizer(
+            lowercase=True,
+            ngram_range=(1, 2),
+            max_features=100000,
+        )
+
+        matrix = vectorizer.fit_transform(
+            [chunk["text"] for chunk in chunks]
+        )
+
+        new_index = {
+            "phones": phones,
+            "chunks": chunks,
+            "vectorizer": vectorizer,
+            "matrix": matrix,
+        }
+
+        # Save to a temporary file first, then replace the old index.
+        temp_file = INDEX_FILE.with_suffix(".tmp")
+
+        try:
+            joblib.dump(new_index, temp_file)
+            os.replace(temp_file, INDEX_FILE)
+        finally:
+            if temp_file.exists():
+                temp_file.unlink()
+
+        _index = new_index
+
+        print(
+            f"Index ready: {len(phones)} manuals, "
+            f"{len(chunks)} text chunks."
+        )
+        print(f"Index saved to: {INDEX_FILE}")
+
+        return _index
+
+
+def get_index():
+    """Load the saved index; build it only if it doesn't exist."""
+    global _index
+
+    with _lock:
+        if _index is not None:
+            return _index
+
+        if INDEX_FILE.exists():
+            try:
+                saved_index = joblib.load(INDEX_FILE)
+                _index = saved_index
+
+                print(f"Loaded saved index from: {INDEX_FILE}")
+                return _index
+
+            except Exception as exc:
+                print(f"Could not load saved index: {exc}")
+                print("Rebuilding the index...")
+
+        return build_index()
+
+
+def retrieve(question, per_phone=4):
+    """
+    Retrieve up to per_phone relevant chunks for each phone.
+
+    Returns:
+        phones: list of manual/phone names
+        evidence: list of chunks, including score and page references
+    """
+    index = get_index()
+
+    phones = index["phones"]
+    chunks = index["chunks"]
+
+    question = (question or "").strip()
+
+    if not question:
+        return phones, []
+
+    query_vector = index["vectorizer"].transform([question])
+    scores = cosine_similarity(
+        query_vector,
+        index["matrix"],
+    ).flatten()
+
+    evidence = []
+
+    for phone in phones:
+        phone_indices = [
+            i for i, chunk in enumerate(chunks)
+            if chunk["phone"] == phone
+        ]
+
+        ranked_indices = sorted(
+            phone_indices,
+            key=lambda i: scores[i],
+            reverse=True,
+        )
+
+        selected = [
+            i for i in ranked_indices
+            if scores[i] > 0
+        ][:per_phone]
+
+        if selected:
+            for i in selected:
+                item = dict(chunks[i])
+                item["score"] = float(scores[i])
+                evidence.append(item)
+        else:
+            evidence.append({
+                "phone": phone,
+                "page": None,
+                "source": "retrieval",
+                "text": "No relevant excerpt matched this question.",
+                "score": 0.0,
+            })
+
+    return phones, evidence
