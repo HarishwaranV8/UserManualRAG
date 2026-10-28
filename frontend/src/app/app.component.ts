@@ -19,6 +19,7 @@ interface Message {
 
 interface ChatResponse {
   answer?: string;
+  in_scope?: boolean;
   phones?: string[];
   sources?: Source[];
   error?: string;
@@ -52,7 +53,11 @@ export class AppComponent {
       return;
     }
 
-    this.messages.push({ role: 'user', text: question });
+    this.messages.push({
+      role: 'user',
+      text: question,
+    });
+
     this.question = '';
     this.loading = true;
     this.error = '';
@@ -78,19 +83,29 @@ export class AppComponent {
         );
       }
 
-      const answer = String(data.answer || 'No answer returned.');
+      const answer = String(
+        data.answer || 'No answer returned.'
+      );
+
       const html = await marked.parse(answer);
+
+      // The LLM determines whether the question is in scope.
+      // For unrelated questions, hide all retrieved sources.
+      const sources: Source[] =
+        data.in_scope === true
+          ? (data.sources ?? [])
+          : [];
 
       this.messages.push({
         role: 'assistant',
         text: answer,
         html,
-        sources: data.sources ?? [],
+        sources,
       });
 
       this.cdr.detectChanges();
 
-      // Scroll the conversation to the latest message.
+      // Scroll to the latest message.
       setTimeout(() => {
         const container = document.querySelector('.messages');
 

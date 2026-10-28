@@ -14,8 +14,10 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
 
+
 _lock = threading.RLock()
 _index = None
+
 INDEX_FILE = Path(__file__).resolve().parent / "rag_index.joblib"
 INDEX_VERSION = 2
 
@@ -23,16 +25,25 @@ INDEX_VERSION = 2
 def manuals_directory():
     """
     Resolve MANUALS_DIR from the environment.
-    Relative paths are resolved from settings.BASE_DIR (backend/).
-    Default: smartphone-rag/manuals/
-    """
-    configured = os.getenv("MANUALS_DIR", "../manuals")
-    path = Path(configured)
 
-    if not path.is_absolute():
-        path = Path(settings.BASE_DIR) / path
+    Relative paths are resolved from settings.BASE_DIR (backend/).
+    Default: smartphone-rag/manuals/ locally,
+             /app/manuals in the Docker deployment.
+    """
+    configured = os.getenv("MANUALS_DIR")
+
+    if configured:
+        path = Path(configured).expanduser()
+        if not path.is_absolute():
+            path = Path(settings.BASE_DIR) / path
+    else:
+        # rag.py is in backend/chat/.
+        # Go up three levels to the repository root.
+        project_root = Path(__file__).resolve().parents[2]
+        path = project_root / "manuals"
 
     return path.resolve()
+
 
 
 def split_text(text, chunk_size=1100, overlap=180):
