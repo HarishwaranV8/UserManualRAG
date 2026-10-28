@@ -42,7 +42,7 @@ export class AppComponent {
   messages: Message[] = [
     {
       role: 'assistant',
-      text: 'Ask a question about a smartphone feature. I will compare all three manuals.',
+      text: 'Ask a question about a smartphone feature. I will compare all the manuals.',
     },
   ];
 
