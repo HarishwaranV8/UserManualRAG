@@ -37,6 +37,9 @@ def is_phone_related(question):
         "samsung s26 fe",
         "iphone 17",
         "iphone-17",
+        "vivo_y20",
+        "vivo-y20",
+        "vivo y20",
     ]
 
     phone_topics = [
@@ -50,7 +53,8 @@ def is_phone_related(question):
     "sim", "sim card", "sim tray", "sim slot", "esim", "e-sim", "dual sim",
     "display", "screen", "amoled", "oled", "lcd", "refresh rate", "hz",
     "resolution", "gorilla glass", "bezel", "always on display", "aod",
-    "foldable", "flip", "hinge", "water resistance", "waterproof", "ip rating",
+    "foldable", "flip", "hinge", "water resistance", "waterproof", "ip rating", 
+    "power button",
     
     # Components & Internals
     "processor", "chipset", "cpu", "gpu", "soc", "nfc", "ir blaster",
@@ -140,7 +144,7 @@ def chat(request):
         if not is_phone_related(question):
             return JsonResponse({
                 "answer": (
-                    "I can only answer questions about the three "
+                    "I can only answer questions about the "
                     "smartphones and their user manuals. Please ask "
                     "about their features, SIM cards, cameras, battery, "
                     "charging, connectivity, settings, or how to use them."
@@ -180,7 +184,7 @@ The three phones are:
 Retrieved manual excerpts:
 {context}
 
-Compare all three phones using the required comparison table.
+Compare all the phones using the required comparison table.
 Do not omit a phone if its evidence is missing.
 If the manuals do not contain enough information for a claim,
 say that the information is not available in the retrieved manuals.
