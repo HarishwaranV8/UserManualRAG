@@ -11,6 +11,10 @@ SECRET_KEY = os.getenv(
 DEBUG = os.getenv("DJANGO_DEBUG", "1") == "1"
 ALLOWED_HOSTS = ["127.0.0.1", "localhost"]
 
+render_hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME")
+if render_hostname:
+    ALLOWED_HOSTS.append(render_hostname)
+
 INSTALLED_APPS = [
     "django.contrib.auth",
     "django.contrib.contenttypes",
