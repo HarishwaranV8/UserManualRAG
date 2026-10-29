@@ -371,23 +371,41 @@ def _refresh_index():
     deleted = old_names - current_names
     changed = set()
 
-    # Hash files to detect edits even when size/mtime metadata is preserved.
+    # Check file metadata first; hash only new or modified files.
     current_fingerprints = {}
+
     for pdf_path in pdf_files:
         signature = _file_signature(pdf_path)
-        sha256 = _file_hash(pdf_path)
+        previous = old_fingerprints.get(pdf_path.name, {})
+
+        # If size and modification time are unchanged, reuse the saved hash.
+        if (
+            pdf_path.name in old_names
+            and previous.get("size") == signature["size"]
+            and previous.get("mtime_ns") == signature["mtime_ns"]
+            and previous.get("sha256")
+        ):
+            sha256 = previous["sha256"]
+        else:
+            # Hash only new files or files whose metadata changed.
+            sha256 = _file_hash(pdf_path)
+
+            if (
+                pdf_path.name in old_names
+                and previous.get("sha256") != sha256
+            ):
+                changed.add(pdf_path.name)
+
         current_fingerprints[pdf_path.name] = {
             **signature,
             "sha256": sha256,
         }
 
-        previous = old_fingerprints.get(pdf_path.name, {})
-        if pdf_path.name in old_names and (
-            previous.get("sha256") != sha256
-        ):
-            changed.add(pdf_path.name)
-
     if not added and not changed and not deleted:
+        if current_fingerprints != old_fingerprints:
+            saved_index["fingerprints"] = current_fingerprints
+            _save_index(saved_index)
+
         _index = saved_index
         print("Manuals unchanged; using saved TF-IDF index.")
         return _index
